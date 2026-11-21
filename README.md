@@ -6,7 +6,7 @@
 
 ```bash
 pip install -e .
-export ANTHROPIC_API_KEY=...   # needed for cluster/transcribe
+export API_KEY_FOR_LOC=...   # needed for cluster/transcribe
 ```
 
 ## Usage
@@ -81,7 +81,7 @@ Dates are EDTF:
 
 ## Cost controls
 
-- Both API stages check for `ANTHROPIC_API_KEY` first. Before spending anything, they print a rough cost estimate and ask for confirmation. Pass `--yes` to skip the prompt.
+- Both API stages check for `API_KEY_FOR_LOC` first. Before spending anything, they print a rough cost estimate and ask for confirmation. Pass `--yes` to skip the prompt.
 - Requests go through the **Message Batches API** by default, which costs half as much but can take up to an hour. Pass `--no-batch` for immediate requests at full price.
 - Every response is cached in `cache/`, keyed on the exact request. Re-running after an edit to `documents.json` only pays for documents that changed.
 - Open batch IDs are kept in `state.json`, so Ctrl-C while waiting is safe. Run the same command again and it picks up the same batch instead of resubmitting.

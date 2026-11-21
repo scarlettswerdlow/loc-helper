@@ -68,11 +68,10 @@ def test_missing_files_give_next_step(tmp_path):
 
 
 def test_require_api_key(monkeypatch):
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
-    with pytest.raises(SystemExit, match="ANTHROPIC_API_KEY"):
+    monkeypatch.delenv("API_KEY_FOR_LOC", raising=False)
+    with pytest.raises(SystemExit, match="API_KEY_FOR_LOC"):
         llm.require_api_key()
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "x")
+    monkeypatch.setenv("API_KEY_FOR_LOC", "x")
     llm.require_api_key()
 
 
