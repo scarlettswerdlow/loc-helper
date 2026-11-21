@@ -79,6 +79,31 @@ Dates are EDTF:
 
 `date_basis` says whether the date was written on the document or inferred, and from what.
 
+## Notion
+
+`loc notion` pushes every document in `docs/` to a Notion database, one page per document. `Description` and `Date` are filled in. No other property is ever written, so checkboxes you tick in Notion survive re-runs. The page body is a short callout (date and basis, LOC links, quality notes, model) followed by the transcription.
+
+Setup, once:
+
+1. Create an internal integration at <https://www.notion.so/profile/integrations> and copy its token.
+2. Share the database with it (••• menu > Connections).
+3. `export NOTION_API_KEY=...`
+
+```bash
+loc notion mss318980007 --database "https://www.notion.so/...?v=..."   # link or bare ID
+loc notion mss318980007 --database <link> --dry-run                     # preview, no token needed
+
+# or as the last step of a full run:
+loc run mss318980007 --start 117 --end 160 --auto --yes --notion --database <link>
+```
+
+`--database` is required every time. The database needs a title property and a date property named `Date`. Notes:
+
+- **Re-runs update in place.** Page IDs are saved in `notion.json`. Unchanged documents are skipped. Edited ones are updated, and their page body is replaced. A page you deleted in Notion is recreated.
+- **Dates** are converted from EDTF: `1862-09` becomes 1862-09-01 and a range becomes a Notion date range. The `?`, `~` and `%` qualifiers can't be expressed in Notion, so the callout keeps the original EDTF. `XXXX` leaves `Date` empty, with a warning.
+- **Line breaks.** The files keep the original line breaks. For Notion, wrapped lines are joined into paragraphs. `[image N]` and label lines such as `[envelope]` stay on their own, as do letterhead, dateline, salutation and closing lines. This is a heuristic, so check the first few pages.
+- **`~~struck~~` and `^inserted^` markers** are written literally, not converted to Notion formatting.
+
 ## Cost controls
 
 - Both API stages check for `API_KEY_FOR_LOC` first. Before spending anything, they print a rough cost estimate and ask for confirmation. Pass `--yes` to skip the prompt.
@@ -96,6 +121,7 @@ Dates are EDTF:
   documents.json   # editable clustering plan
   docs/  index.csv  skipped.csv
   cache/  state.json
+  notion.json      # Notion page IDs, written by `loc notion`
 ```
 
 ## Tests
@@ -105,4 +131,4 @@ pip install -e '.[dev]'
 pytest
 ```
 
-The tests use a fake Anthropic client and need no network access or API key.
+The tests use a fake Anthropic client and a fake Notion client, and need no network access or API key.
