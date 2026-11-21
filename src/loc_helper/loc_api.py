@@ -26,7 +26,7 @@ def fetch(url: str, tries: int = 8, timeout: int = 90, max_delay: int = 60) -> t
         except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, ConnectionError,
                 http.client.HTTPException, OSError) as e:
             code = getattr(e, "code", None)
-            if code is not None and code not in (429, 500, 502, 503, 504):
+            if code is not None and code not in (408, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524):
                 raise
             if attempt == tries:
                 break
