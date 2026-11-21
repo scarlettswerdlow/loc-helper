@@ -257,3 +257,15 @@ def test_refusal_is_reported_not_cached(workdir, fake_client):
     jobs = cluster.build_jobs(workdir, "claude-sonnet-5-5", 4, 1)
     assert llm.run_jobs(jobs, workdir, batch=False, client=fake_client) == {}
     assert os.listdir(os.path.join(workdir, "cache")) == []
+
+
+@pytest.mark.parametrize("argv", [
+    ["download", "not an id!"],
+    ["cluster", "mss318980007", "--window", "3", "--overlap", "3"],
+])
+def test_cli_rejects_bad_args_without_traceback(argv, capsys):
+    from loc_helper.cli import main
+    with pytest.raises(SystemExit) as exc:
+        main(argv)
+    assert exc.value.code == 2
+    assert "error:" in capsys.readouterr().err
