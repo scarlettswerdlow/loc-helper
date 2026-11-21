@@ -104,6 +104,8 @@ def transcribe(workdir: str, model: str, batch: bool, yes: bool, effort: str = "
     jobs = [j for _, js in per_doc for j in js]
     store = llm.Store(workdir)
     uncached = [j for j in jobs if store.get(j.key()) is None]
+    if uncached and client is None:
+        llm.require_api_key()
     if not llm.confirm_spend(uncached, batch, yes, "Transcription"):
         return None
     results = llm.run_jobs(jobs, workdir, batch, client=client)

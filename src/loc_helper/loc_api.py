@@ -16,7 +16,7 @@ from dataclasses import dataclass
 UA = {"User-Agent": "Mozilla/5.0 (loc-helper research download)"}
 
 
-def fetch(url: str, tries: int = 8, timeout: int = 90) -> tuple[bytes, str]:
+def fetch(url: str, tries: int = 8, timeout: int = 90, max_delay: int = 60) -> tuple[bytes, str]:
     delay = 3
     for attempt in range(1, tries + 1):
         try:
@@ -28,15 +28,17 @@ def fetch(url: str, tries: int = 8, timeout: int = 90) -> tuple[bytes, str]:
             code = getattr(e, "code", None)
             if code is not None and code not in (429, 500, 502, 503, 504):
                 raise
-            print(f"  retry {attempt}/{tries} ({e}) in {delay}s", file=sys.stderr)
+            if attempt == tries:
+                break
+            print(f"  retry {attempt}/{tries - 1} ({e}) in {delay}s", file=sys.stderr)
             time.sleep(delay)
-            delay = min(delay * 2, 60)
+            delay = min(delay * 2, max_delay)
     raise RuntimeError(f"giving up on {url}")
 
 
-def fetch_json(url: str) -> dict:
+def fetch_json(url: str, **fetch_kw) -> dict:
     for attempt in range(5):
-        body, _ = fetch(url)
+        body, _ = fetch(url, **fetch_kw)
         try:
             return json.loads(body)
         except json.JSONDecodeError:
@@ -48,19 +50,63 @@ _ITEM_RE = re.compile(r"loc\.gov/item/([A-Za-z0-9._-]+?)/?(?:[?#].*)?$")
 _RESOURCE_RE = re.compile(r"loc\.gov/resource/([A-Za-z0-9._-]+?)/?(?:[?#].*)?$")
 
 
-def parse_item_id(s: str) -> str:
-    """Accept a bare item ID, a loc.gov/item/ URL, or a loc.gov/resource/ URL."""
+def resource_item_id(resource_url: str) -> str:
+    """Look up the item a loc.gov/resource/ URL belongs to.
+
+    Resource IDs can't be turned into item IDs by rule: mss31898.0007 is item
+    mss318980007, but mss31898.mss31898-003_0154_0463 is also part of it. The
+    resource's JSON names its item, so ask loc.gov.
+    """
+    url = resource_url.split("?")[0].split("#")[0].rstrip("/") + "/?fo=json"
+    try:
+        data = fetch_json(url, tries=3, max_delay=10)
+    except (RuntimeError, urllib.error.HTTPError) as e:
+        raise SystemExit(f"couldn't look up the item for {resource_url} ({e}). "
+                         "Pass the loc.gov/item/... URL or item ID instead.")
+    item = data.get("item")
+    if isinstance(item, dict):
+        item = item.get("id") or item.get("url")
+    m = _ITEM_RE.search(item or "")
+    if not m:
+        raise SystemExit(f"loc.gov didn't say which item {resource_url} belongs to. "
+                         "Pass the loc.gov/item/... URL or item ID instead.")
+    return m.group(1)
+
+
+def parse_item_id(s: str, lookup=resource_item_id) -> str:
+    """Accept a bare item ID, a loc.gov/item/ URL, or a loc.gov/resource/ URL.
+
+    Resource URLs are resolved with `lookup`, which asks loc.gov.
+    """
     s = s.strip()
     m = _ITEM_RE.search(s)
     if m:
         return m.group(1)
-    m = _RESOURCE_RE.search(s)
-    if m:
-        # Resource IDs look like mss31898.0007; the item ID drops the dot.
-        return m.group(1).replace(".", "")
+    if _RESOURCE_RE.search(s):
+        return lookup(s)
     if re.fullmatch(r"[A-Za-z0-9._-]+", s):
         return s
     raise ValueError(f"can't find a loc.gov item ID in {s!r}")
+
+
+def fetch_item(item_id: str) -> dict:
+    """Fetch an item's JSON, failing fast if loc.gov doesn't know it.
+
+    loc.gov answers an unknown item ID with 503, the same as an outage, so a
+    long retry loop here would just make typos slow. Images keep the full
+    retries in `fetch`.
+    """
+    url = f"{item_url(item_id)}?fo=json"
+    try:
+        item = fetch_json(url, tries=3, max_delay=10)
+    except (RuntimeError, urllib.error.HTTPError) as e:
+        raise SystemExit(f"loc.gov has no item {item_id!r} ({e}).\n"
+                         f"Check the ID: unknown items get the same 503 error as an outage. "
+                         f"If {item_url(item_id)} opens in a browser, loc.gov may be down; "
+                         f"try again later.")
+    if not item.get("resources"):
+        raise SystemExit(f"loc.gov item {item_id!r} has no page images to download.")
+    return item
 
 
 def item_url(item_id: str) -> str:
@@ -135,12 +181,16 @@ def _download_set(pages: list[Page], pct: float, outdir: str, pause: float, labe
 def download(item_id: str, workdir: str, start: int = 1, end: int | None = None,
              size: float = 50, thumb_size: float = 25, pause: float = 1.0) -> dict:
     """Fetch item.json, full-size images and clustering thumbnails. Returns item.json."""
+    if start < 1 or (end is not None and end < start):
+        raise SystemExit(f"bad image range {start}-{end}: need 1 <= --start <= --end")
+    item = fetch_item(item_id)
+    pages = item_pages(item)
+    if start > len(pages):
+        raise SystemExit(f"--start {start} is past the last image ({len(pages)})")
     os.makedirs(workdir, exist_ok=True)
-    item = fetch_json(f"{item_url(item_id)}?fo=json")
     with open(os.path.join(workdir, "item.json"), "w") as f:
         json.dump(item, f, indent=1)
 
-    pages = item_pages(item)
     end = min(end or len(pages), len(pages))
     chosen = [p for p in pages if start <= p.n <= end]
     title = item.get("item", {}).get("title", item_id)
@@ -162,7 +212,11 @@ def download(item_id: str, workdir: str, start: int = 1, end: int | None = None,
 
 
 def read_manifest(workdir: str) -> dict[int, dict]:
-    with open(os.path.join(workdir, "manifest.csv"), newline="") as f:
+    path = os.path.join(workdir, "manifest.csv")
+    if not os.path.exists(path):
+        raise SystemExit(f"{path} not found: run `loc download` first "
+                         "(or pass --out if you used a different working directory)")
+    with open(path, newline="") as f:
         return {int(r["image_number"]): r for r in csv.DictReader(f)}
 
 

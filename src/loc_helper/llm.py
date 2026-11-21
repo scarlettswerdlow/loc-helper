@@ -157,6 +157,13 @@ def _parse_message(msg) -> dict:
     return data
 
 
+def require_api_key() -> None:
+    """Stop with a plain message, before the cost prompt, if there's no key to call Claude with."""
+    if not (os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")):
+        raise SystemExit("ANTHROPIC_API_KEY is not set; it's needed to call Claude for this "
+                         "step.\n  export ANTHROPIC_API_KEY=sk-ant-...")
+
+
 def _client():
     import anthropic
     return anthropic.Anthropic()

@@ -4,6 +4,7 @@ import os
 import pytest
 
 from loc_helper import cluster, llm, output, transcribe
+from loc_helper import loc_api
 from loc_helper.loc_api import item_pages, jpeg_size, parse_item_id
 
 from conftest import tiny_jpeg
@@ -15,10 +16,64 @@ from conftest import tiny_jpeg
     ("mss318980007", "mss318980007"),
     ("https://www.loc.gov/item/mss318980007/", "mss318980007"),
     ("https://www.loc.gov/item/mss318980007/?st=gallery", "mss318980007"),
-    ("https://www.loc.gov/resource/mss31898.0007/?sp=117", "mss318980007"),
 ])
 def test_parse_item_id(s, expected):
-    assert parse_item_id(s) == expected
+    assert parse_item_id(s, lookup=lambda u: pytest.fail("no lookup expected")) == expected
+
+
+@pytest.mark.parametrize("url", [
+    "https://www.loc.gov/resource/mss31898.0007/?sp=117",
+    "https://www.loc.gov/resource/mss31898.mss31898-003_0154_0463/?sp=117",
+])
+def test_parse_item_id_resolves_resource_urls(url):
+    assert parse_item_id(url, lookup=lambda u: "mss318980007") == "mss318980007"
+
+
+@pytest.mark.parametrize("item_field", [
+    "http://www.loc.gov/item/mss318980007/",
+    {"id": "http://www.loc.gov/item/mss318980007/"},
+])
+def test_resource_item_id_reads_item_link(monkeypatch, item_field):
+    seen = []
+    def fake_fetch_json(url, **kw):
+        seen.append(url)
+        return {"item": item_field}
+    monkeypatch.setattr(loc_api, "fetch_json", fake_fetch_json)
+    url = "https://www.loc.gov/resource/mss31898.mss31898-003_0154_0463/?sp=117"
+    assert loc_api.resource_item_id(url) == "mss318980007"
+    assert seen == ["https://www.loc.gov/resource/mss31898.mss31898-003_0154_0463/?fo=json"]
+
+
+def test_fetch_item_unknown_id_fails_fast(monkeypatch):
+    def boom(url, **kw):
+        assert kw["tries"] <= 3
+        raise RuntimeError("giving up")
+    monkeypatch.setattr(loc_api, "fetch_json", boom)
+    with pytest.raises(SystemExit, match="no item 'mss000'"):
+        loc_api.fetch_item("mss000")
+
+
+@pytest.mark.parametrize("start,end", [(0, 5), (50, 10)])
+def test_download_rejects_bad_range(tmp_path, start, end):
+    with pytest.raises(SystemExit, match="bad image range"):
+        loc_api.download("mss318980007", str(tmp_path / "w"), start, end)
+    assert not (tmp_path / "w").exists()
+
+
+def test_missing_files_give_next_step(tmp_path):
+    with pytest.raises(SystemExit, match="loc download"):
+        loc_api.read_manifest(str(tmp_path))
+    with pytest.raises(SystemExit, match="loc cluster"):
+        cluster.load_plan(str(tmp_path))
+
+
+def test_require_api_key(monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
+    with pytest.raises(SystemExit, match="ANTHROPIC_API_KEY"):
+        llm.require_api_key()
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "x")
+    llm.require_api_key()
 
 
 def test_parse_item_id_rejects_garbage():

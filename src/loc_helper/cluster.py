@@ -52,9 +52,9 @@ def windows(images: list[int], size: int, overlap: int) -> list[list[int]]:
 
 def build_jobs(workdir: str, model: str, size: int = 12, overlap: int = 3,
                effort: str = "low") -> list[llm.Job]:
+    images = sorted(read_manifest(workdir))
     with open(os.path.join(workdir, "item.json")) as f:
         context = item_context(json.load(f))
-    images = sorted(read_manifest(workdir))
     jobs = []
     for w in windows(images, size, overlap):
         content: list = [{"type": "text", "text": f"Catalog record for this item:\n{context}\n"}]
@@ -104,6 +104,8 @@ def cluster(workdir: str, item_id: str, model: str, batch: bool, yes: bool, size
             overlap: int = 3, client=None) -> dict | None:
     jobs = build_jobs(workdir, model, size, overlap)
     uncached = [j for j in jobs if llm.Store(workdir).get(j.key()) is None]
+    if uncached and client is None:
+        llm.require_api_key()
     if not llm.confirm_spend(uncached, batch, yes, "Clustering"):
         return None
     results = llm.run_jobs(jobs, workdir, batch, client=client)
@@ -146,7 +148,11 @@ def write_plan(workdir: str, plan: dict) -> None:
 
 
 def load_plan(workdir: str) -> dict:
-    with open(os.path.join(workdir, "documents.json")) as f:
+    path = os.path.join(workdir, "documents.json")
+    if not os.path.exists(path):
+        raise SystemExit(f"{path} not found: run `loc cluster` first "
+                         "(or pass --out if you used a different working directory)")
+    with open(path) as f:
         return json.load(f)
 
 

@@ -24,7 +24,7 @@ loc transcribe mss318980007
 loc run mss318980007 --start 117 --end 160 --auto --yes
 ```
 
-The item can be given as a bare ID, a `loc.gov/item/...` URL, or a `loc.gov/resource/...` URL. Each stage can also be run on its own with `loc download`, `loc cluster` and `loc transcribe`. Run `loc <cmd> --help` for the options.
+The item can be given as a bare ID, a `loc.gov/item/...` URL, or a `loc.gov/resource/...` URL (looked up on loc.gov to find its item). Each stage can also be run on its own with `loc download`, `loc cluster` and `loc transcribe`. Run `loc <cmd> --help` for the options.
 
 ## How it works
 
@@ -43,24 +43,32 @@ The transcriptions are **diplomatic**:
 
 ### Output file
 
-`docs/007_1862-09-17_mcclellan-to-halleck-on-antietam.txt`:
+`docs/012_1855-03-30_cooper-telegram-ordering-mcclellan-to-washington.txt` (an example written by hand from image 117 of `mss318980007`; real output will differ in detail):
 
 ```
 ---
-description: McClellan to Halleck on Antietam
-date: 1862-09-17
+description: Telegram from Adjutant General S. Cooper ordering Capt. McClellan to report to Washington
+date: 1855-03-30
 date_basis: written
 item: https://www.loc.gov/item/mss318980007/
-images: [117, 118, 119]
+images: [117]
 loc_urls:
-- https://www.loc.gov/resource/mss31898.0007/?sp=117
-- ...
+- https://www.loc.gov/resource/mss31898.mss31898-003_0154_0463/?sp=117
 model: claude-opus-5-5
-quality_notes: Faded ink on p.2; signature partly obscured.
+quality_notes: Printed telegraph form; handwritten portions clear. Docket notation at lower left partly uncertain.
 ---
 [image 117]
-Head Qrs Army of the Potomac
-...
+Dated Washington March 30 1855
+Rec'd, Philadelphia, Mar 30 1855, 6 o'clock, 15 min. P. M.
+To Capt Geo B McClellan
+1st Regiment Cavalry
+Care Major Crossman
+Q.M. — U.S.A.
+Repair to this city without
+delay & report to the
+Adjutant General
+S Cooper
+Adjt Genl.
 ```
 
 Dates are EDTF:
@@ -73,7 +81,7 @@ Dates are EDTF:
 
 ## Cost controls
 
-- Before spending anything, both API stages print a rough cost estimate and ask for confirmation. Pass `--yes` to skip the prompt.
+- Both API stages check for `ANTHROPIC_API_KEY` first. Before spending anything, they print a rough cost estimate and ask for confirmation. Pass `--yes` to skip the prompt.
 - Requests go through the **Message Batches API** by default, which costs half as much but can take up to an hour. Pass `--no-batch` for immediate requests at full price.
 - Every response is cached in `cache/`, keyed on the exact request. Re-running after an edit to `documents.json` only pays for documents that changed.
 - Open batch IDs are kept in `state.json`, so Ctrl-C while waiting is safe. Run the same command again and it picks up the same batch instead of resubmitting.
