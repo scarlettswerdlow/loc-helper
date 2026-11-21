@@ -69,8 +69,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    a = build_parser().parse_args(argv)
-    item_id = parse_item_id(a.item)
+    ap = build_parser()
+    a = ap.parse_args(argv)
+    try:
+        item_id = parse_item_id(a.item)
+    except ValueError as e:
+        ap.error(str(e))
+    if a.cmd in ("cluster", "run") and not 0 <= a.overlap < a.window:
+        ap.error(f"--overlap ({a.overlap}) must be at least 0 and less than --window ({a.window})")
     workdir = a.out or item_id
     batch = not getattr(a, "no_batch", False)
 

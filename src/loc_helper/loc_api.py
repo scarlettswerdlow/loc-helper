@@ -101,7 +101,7 @@ def fetch_item(item_id: str) -> dict:
         item = fetch_json(url, tries=3, max_delay=10)
     except (RuntimeError, urllib.error.HTTPError) as e:
         raise SystemExit(f"loc.gov has no item {item_id!r} ({e}).\n"
-                         f"Check the ID: unknown items get the same 503 error as an outage. "
+                         f"Check the ID: loc.gov sometimes answers unknown items with the same 503 error as an outage. "
                          f"If {item_url(item_id)} opens in a browser, loc.gov may be down; "
                          f"try again later.")
     if not item.get("resources"):
