@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "loc-helper"
+version = "0.1.0"
+description = "Download, cluster and transcribe Library of Congress manuscript items with Claude"
+requires-python = ">=3.10"
+dependencies = ["anthropic>=0.80", "pyyaml>=6"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+loc = "loc_helper.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+loc_helper = ["prompts/*.md"]
