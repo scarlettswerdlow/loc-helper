@@ -119,6 +119,19 @@ def test_rich_text_splits_long_text_on_whitespace():
     assert " ".join(p["text"]["content"] for p in parts) == text
 
 
+def test_callout_with_many_images_respects_rich_text_limit():
+    n = 150
+    meta = {"description": "d", "date": "1856-01-24", "date_basis": "written",
+            "images": list(range(1, n + 1)),
+            "loc_urls": [f"https://www.loc.gov/resource/x/?sp={i}" for i in range(1, n + 1)]}
+    blocks = notion.build_blocks(meta, "text\n")
+    for b in blocks:
+        assert len(b[b["type"]]["rich_text"]) <= notion.MAX_RICH
+    assert blocks[0]["type"] == "callout" and blocks[1]["type"] == "paragraph"
+    text = "".join(r["text"]["content"] for b in blocks[:-1] for r in b[b["type"]]["rich_text"])
+    assert text.count("image ") == n
+
+
 def test_build_blocks_callout_and_literal_markers():
     meta = {"description": "d", "date": "1862-09-17?", "date_basis": "written",
             "item": "https://www.loc.gov/item/mss123/", "images": [5],

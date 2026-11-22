@@ -28,6 +28,7 @@ TOKEN_ENV = "NOTION_API_KEY"
 STATE_FILE = "notion.json"
 MAX_TEXT = 2000    # characters per rich-text object
 MAX_BLOCKS = 100   # blocks per request
+MAX_RICH = 100     # rich-text objects per block
 
 
 class NotionError(RuntimeError):
@@ -273,13 +274,33 @@ def _callout(meta: dict) -> dict:
         line("Quality notes: ", str(meta["quality_notes"]))
     if meta.get("model"):
         line("Model: ", str(meta["model"]))
-    rich = [r for text, link in segs for r in _rich_text(text, link)]
-    return {"object": "block", "type": "callout",
-            "callout": {"rich_text": rich, "icon": {"type": "emoji", "emoji": "📜"}}}
+    rich = _merge_rich([r for text, link in segs for r in _rich_text(text, link)])
+    head, overflow = rich[:MAX_RICH], rich[MAX_RICH:]
+    blocks = [{"object": "block", "type": "callout",
+               "callout": {"rich_text": head, "icon": {"type": "emoji", "emoji": "📜"}}}]
+    # Notion caps a block at MAX_RICH rich-text objects; spill the rest into paragraphs.
+    for chunk in _chunks(overflow, MAX_RICH):
+        blocks.append({"object": "block", "type": "paragraph", "paragraph": {"rich_text": chunk}})
+    return blocks
+
+
+def _merge_rich(items: list[dict]) -> list[dict]:
+    """Join adjacent rich-text objects with the same link, when the result fits MAX_TEXT."""
+    out: list[dict] = []
+    for item in items:
+        if out:
+            prev = out[-1]["text"]
+            cur = item["text"]
+            if (prev.get("link") == cur.get("link")
+                    and len(prev["content"]) + len(cur["content"]) <= MAX_TEXT):
+                prev["content"] += cur["content"]
+                continue
+        out.append(item)
+    return out
 
 
 def build_blocks(meta: dict, body: str) -> list[dict]:
-    blocks = [_callout(meta)]
+    blocks = _callout(meta)
     for para in reflow(body):
         blocks.append({"object": "block", "type": "paragraph",
                        "paragraph": {"rich_text": _rich_text(para)}})
