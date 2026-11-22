@@ -1,4 +1,4 @@
-"""`loc` command line: download, cluster, transcribe, run."""
+"""`loc` command line: download, cluster, transcribe, run, notion."""
 from __future__ import annotations
 
 import argparse
@@ -6,6 +6,7 @@ import os
 import sys
 
 from . import cluster as cluster_mod
+from . import notion as notion_mod
 from . import transcribe as transcribe_mod
 from .loc_api import download, parse_item_id
 
@@ -65,6 +66,17 @@ def build_parser() -> argparse.ArgumentParser:
     _common(p); _download_args(p); _cluster_args(p); _transcribe_args(p); _api_args(p)
     p.add_argument("--auto", action="store_true",
                    help="go straight on to transcription without stopping to review documents.json")
+    p.add_argument("--notion", action="store_true",
+                   help="after transcribing (needs --auto), push the documents to Notion; "
+                        "requires --database")
+    p.add_argument("--database", help="Notion database link (or ID) for --notion")
+
+    p = sub.add_parser("notion", help="push the documents in docs/ to a Notion database")
+    _common(p)
+    p.add_argument("--database", required=True,
+                   help="link (or ID) of the Notion database to write to")
+    p.add_argument("--dry-run", action="store_true",
+                   help="show what would be pushed without contacting Notion")
     return ap
 
 
@@ -77,6 +89,17 @@ def main(argv: list[str] | None = None) -> int:
         ap.error(str(e))
     if a.cmd in ("cluster", "run") and not 0 <= a.overlap < a.window:
         ap.error(f"--overlap ({a.overlap}) must be at least 0 and less than --window ({a.window})")
+    wants_notion = a.cmd == "notion" or (a.cmd == "run" and a.notion)
+    if wants_notion:
+        if not a.database:
+            ap.error("--notion needs --database <Notion database link>")
+        try:
+            notion_mod.parse_database_id(a.database)
+        except ValueError as e:
+            ap.error(str(e))
+        # Fail before the slow, paid stages if the token is missing.
+        if a.cmd == "notion" and not a.dry_run or a.cmd == "run" and a.auto:
+            notion_mod.require_token()
     workdir = a.out or item_id
     batch = not getattr(a, "no_batch", False)
 
@@ -91,9 +114,16 @@ def main(argv: list[str] | None = None) -> int:
             print(f"\nReview {plan_path}: merge or split documents by editing their 'images' "
                   f"lists, then run:\n  loc transcribe {item_id}"
                   + (f" --out {a.out}" if a.out else ""))
+            if a.notion:
+                print(f"and push the result to Notion:\n  loc notion {item_id} --database "
+                      f"{a.database}" + (f" --out {a.out}" if a.out else ""))
             return 0
     if a.cmd in ("transcribe", "run"):
         if transcribe_mod.transcribe(workdir, a.model, batch, a.yes, a.effort) is None:
+            return 1
+    if wants_notion:
+        counts = notion_mod.push(workdir, a.database, dry_run=getattr(a, "dry_run", False))
+        if counts["failed"]:
             return 1
     return 0
 

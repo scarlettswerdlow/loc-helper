@@ -113,3 +113,67 @@ class FakeClient:
 @pytest.fixture
 def fake_client():
     return FakeClient()
+
+
+class FakeNotion:
+    """In-memory stand-in for notion.Client: one database, one data source, pages and blocks."""
+
+    def __init__(self, properties=None):
+        self.properties = properties or {
+            "Description": {"type": "title"}, "Date": {"type": "date"},
+            "Copy": {"type": "checkbox"}, "Read": {"type": "checkbox"},
+            "Relevant": {"type": "checkbox"}}
+        self.pages = {}     # page id -> {"properties", "children": [block ids], "trashed"}
+        self.blocks = {}    # block id -> block
+        self.calls = []
+        self._n = 0
+
+    def _new_blocks(self, page_id, blocks):
+        for b in blocks:
+            self._n += 1
+            bid = f"block{self._n}"
+            self.blocks[bid] = b
+            self.pages[page_id]["children"].append(bid)
+
+    def request(self, method, path, body=None, tries=6):
+        self.calls.append((method, path, body))
+        path = path.split("?")[0]
+        if method == "GET" and path.startswith("/databases/"):
+            return {"data_sources": [{"id": "ds1", "name": "Papers"}]}
+        if method == "GET" and path == "/data_sources/ds1":
+            return {"properties": self.properties}
+        if method == "POST" and path == "/pages":
+            assert body["parent"] == {"type": "data_source_id", "data_source_id": "ds1"}
+            assert len(body["children"]) <= 100
+            self._n += 1
+            pid = f"page{self._n}"
+            self.pages[pid] = {"properties": body["properties"], "children": [], "trashed": False}
+            self._new_blocks(pid, body["children"])
+            return {"id": pid, "url": f"https://www.notion.so/{pid}"}
+        if method == "PATCH" and path.startswith("/pages/"):
+            page = self.pages.get(path.rsplit("/", 1)[1])
+            if page is None:
+                from loc_helper.notion import NotionError
+                raise NotionError("not found", 404)
+            page["properties"].update(body["properties"])
+            return {"id": path.rsplit("/", 1)[1], "in_trash": page["trashed"]}
+        if method == "GET" and path.startswith("/blocks/") and path.endswith("/children"):
+            page = self.pages[path.split("/")[2]]
+            return {"results": [{"id": b} for b in page["children"][:100]]}
+        if method == "DELETE" and path.startswith("/blocks/"):
+            bid = path.rsplit("/", 1)[1]
+            self.blocks.pop(bid)
+            for page in self.pages.values():
+                if bid in page["children"]:
+                    page["children"].remove(bid)
+            return {}
+        if method == "PATCH" and path.startswith("/blocks/") and path.endswith("/children"):
+            assert len(body["children"]) <= 100
+            self._new_blocks(path.split("/")[2], body["children"])
+            return {}
+        raise AssertionError(f"unexpected {method} {path}")
+
+
+@pytest.fixture
+def fake_notion():
+    return FakeNotion()
