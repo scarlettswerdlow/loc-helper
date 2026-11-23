@@ -282,6 +282,8 @@ def test_cli_rejects_bad_args_without_traceback(argv, capsys):
      "Names such as Dr [?Arcik?] Leghorn are guessed.", True),
     ("Dated c. 1868 from content, e.g. Nell's room. Verify.",
      "Dated c. 1868 from content, e.g. Nell's room.", True),
+    ("Check faint pencil pages (esp. 40-51) and img. 3. Then more.",
+     "Check faint pencil pages (esp. 40-51) and img. 3.", True),
     ("Clear hand;\n  one word uncertain.", "Clear hand; one word uncertain.", False),
 ])
 def test_first_sentence(text, expected, cut):

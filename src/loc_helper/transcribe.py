@@ -40,7 +40,7 @@ ABBREVIATIONS = {
     "adjt", "asst", "capt", "cf", "co", "col", "dept", "do", "dr", "e.g", "esq", "etc", "gen",
     "genl", "gov", "hon", "i.e", "jr", "lieut", "lt", "maj", "messrs", "mr", "mrs", "no",
     "nos", "p", "pp", "prof", "pvt", "regt", "rev", "sec", "sergt", "sgt", "sr", "st", "vol",
-    "vs", "c", "ca", "approx", "fig", "ms", "mss", "viz",
+    "vs", "c", "ca", "approx", "fig", "ms", "mss", "viz", "esp", "img", "imgs", "incl", "abt",
 }
 # A full stop, ! or ? (plus any closing quote or bracket) followed by space and a capital,
 # digit, quote or bracket. "?" right after "[" or before "]" is an uncertain-reading marker.
