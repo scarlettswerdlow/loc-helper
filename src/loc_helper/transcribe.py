@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import sys
 
 from . import llm, output
 from .cluster import load_plan, prompt, validate_plan
@@ -22,6 +24,65 @@ SCHEMA = {
     "required": ["transcription", "description", "date", "date_basis", "quality_notes"],
     "additionalProperties": False,
 }
+
+
+NOTES_MODEL = "claude-haiku-5-5"  # merges per-part quality notes into one sentence
+NOTES_SCHEMA = {
+    "type": "object",
+    "properties": {"quality_notes": {"type": "string"}},
+    "required": ["quality_notes"],
+    "additionalProperties": False,
+}
+NO_PROBLEMS = "No significant problems."
+
+# Words that end in a full stop without ending the sentence ("Genl. McClellan", "c. 1868").
+ABBREVIATIONS = {
+    "adjt", "asst", "capt", "cf", "co", "col", "dept", "do", "dr", "e.g", "esq", "etc", "gen",
+    "genl", "gov", "hon", "i.e", "jr", "lieut", "lt", "maj", "messrs", "mr", "mrs", "no",
+    "nos", "p", "pp", "prof", "pvt", "regt", "rev", "sec", "sergt", "sgt", "sr", "st", "vol",
+    "vs", "c", "ca", "approx", "fig", "ms", "mss", "viz",
+}
+# A full stop, ! or ? (plus any closing quote or bracket) followed by space and a capital,
+# digit, quote or bracket. "?" right after "[" or before "]" is an uncertain-reading marker.
+_BOUNDARY = re.compile(r"""(?<!\[)([.!?])(["')]*)\s+(?=["'(\[A-Z0-9])""")
+
+
+def first_sentence(text: str) -> tuple[str, bool]:
+    """(first sentence of text, whether anything after it was dropped)."""
+    text = " ".join((text or "").split())
+    for m in _BOUNDARY.finditer(text):
+        if m.group(1) == ".":
+            word = re.search(r"([\w.]+)$", text[:m.start()])
+            w = word.group(1).lower() if word else ""
+            if w in ABBREVIATIONS or (len(w) == 1 and w.isalpha()):
+                continue  # abbreviation or an initial ("S. Cooper")
+        return text[:m.end(2)], True
+    return text, False
+
+
+def one_sentence(note: str, where: str) -> str:
+    sentence, cut = first_sentence(note)
+    if cut:
+        print(f"  warning: {where}: quality_notes had more than one sentence; kept the first",
+              file=sys.stderr)
+    return sentence or NO_PROBLEMS
+
+
+def condense_job(notes: list[str], name: str) -> llm.Job:
+    """A small text-only request that turns several quality notes into one sentence."""
+    listing = "\n".join(f"- {n.strip()}" for n in notes if n.strip()) or f"- {NO_PROBLEMS}"
+    return llm.Job(
+        name=f"quality notes for {name}", model=NOTES_MODEL, system=prompt("condense"),
+        content=[{"type": "text", "text": f"Notes:\n{listing}"}], schema=NOTES_SCHEMA,
+        max_tokens=4000, effort="low", expected_output_tokens=200,
+    )
+
+
+def condense_notes(notes: list[str], workdir: str, client=None) -> str | None:
+    """One sentence summarising notes, or None if the request failed. Cached in workdir/cache."""
+    job = condense_job(notes, "document")
+    result = llm.run_jobs([job], workdir, batch=False, client=client).get(job.key())
+    return None if result is None else result["quality_notes"]
 
 
 def chunks(images: list[int], size: int | None = None) -> list[list[int]]:
@@ -69,15 +130,25 @@ def build_jobs(workdir: str, plan: dict, model: str, effort: str) -> list[tuple[
     return out
 
 
-def assemble(doc: dict, results: list[dict], item_id: str, manifest: dict[int, dict]) -> dict:
+def assemble(doc: dict, results: list[dict], item_id: str, manifest: dict[int, dict],
+             merged_note: str | None = None) -> dict:
+    """merged_note: the one-sentence note for a multi-part document (see condense_job)."""
     first = results[0]
     text = "\n\n".join(r["transcription"].strip() for r in results)
-    notes = [r["quality_notes"].strip() for r in results if r["quality_notes"].strip()]
-    if len(results) > 1:
-        notes = [f"part {i + 1}: {n}" for i, n in enumerate(notes)]
+    where = f"document {doc['id']}"
+    if len(results) == 1:
+        note = one_sentence(first["quality_notes"], where)
+    elif merged_note is not None:
+        note = one_sentence(merged_note, where)
+    else:
+        print(f"  warning: {where}: couldn't merge the quality notes of its {len(results)} parts; "
+              "kept part 1's", file=sys.stderr)
+        note = one_sentence(first["quality_notes"], where)
     date = first["date"].strip()
     if not output.valid_edtf(date):
-        notes.append(f"Model returned a non-EDTF date {date!r}; recorded as XXXX.")
+        # Keep it one sentence: fold the warning into the note.
+        bad = f"model returned a non-EDTF date {date!r}, recorded as XXXX"
+        note = bad[0].upper() + bad[1:] + "." if note == NO_PROBLEMS else f"{note.rstrip('.')}; {bad}."
         date = "XXXX"
     meta = {
         "description": first["description"].strip(),
@@ -87,7 +158,7 @@ def assemble(doc: dict, results: list[dict], item_id: str, manifest: dict[int, d
         "images": doc["images"],
         "loc_urls": [manifest[n]["loc_viewer_url"] for n in doc["images"]],
         "model": first.get("_model", ""),
-        "quality_notes": " ".join(notes) or "No significant problems.",
+        "quality_notes": note,
     }
     return {"seq": doc["id"], "meta": meta, "text": text}
 
@@ -110,12 +181,27 @@ def transcribe(workdir: str, model: str, batch: bool, yes: bool, effort: str = "
         return None
     results = llm.run_jobs(jobs, workdir, batch, client=client)
 
-    records, failed = [], []
+    done, failed = [], []
     for doc, js in per_doc:
         if all(j.key() in results for j in js):
-            records.append(assemble(doc, [results[j.key()] for j in js], plan["item_id"], manifest))
+            done.append((doc, [results[j.key()] for j in js]))
         else:
             failed.append(doc["id"])
+
+    # Long documents come back as several parts, each with its own note: merge them into one
+    # sentence with a small text-only request. Always sent immediately (it's tiny), and cached.
+    merges = {doc["id"]: condense_job([r["quality_notes"] for r in rs], f"document {doc['id']}")
+              for doc, rs in done if len(rs) > 1}
+    merged: dict = {}
+    if merges:
+        if client is None and any(store.get(j.key()) is None for j in merges.values()):
+            llm.require_api_key()
+        print(f"  merging quality notes for {len(merges)} multi-part documents ({NOTES_MODEL})")
+        out = llm.run_jobs(list(merges.values()), workdir, batch=False, client=client)
+        merged = {d: out[j.key()]["quality_notes"] for d, j in merges.items() if j.key() in out}
+
+    records = [assemble(doc, rs, plan["item_id"], manifest, merged.get(doc["id"]))
+               for doc, rs in done]
     names = output.write_documents(workdir, records, plan.get("skipped", []))
     print(f"  wrote {len(names)} documents to {os.path.join(workdir, 'docs')}")
     if failed:

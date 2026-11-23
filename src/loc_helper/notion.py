@@ -367,6 +367,11 @@ def _save_state(path: str, state: dict) -> None:
     os.replace(path + ".part", path)
 
 
+def page_digest(props: dict, blocks: list[dict]) -> str:
+    """What notion.json stores to tell whether a document changed since its last push."""
+    return hashlib.sha256(json.dumps([props, blocks], sort_keys=True).encode()).hexdigest()
+
+
 def _doc_key(meta: dict, name: str) -> str:
     images = meta.get("images") or []
     return str(images[0]) if images else name
@@ -420,7 +425,7 @@ def push(workdir: str, database: str, client=None, dry_run: bool = False) -> dic
             continue
 
         key = _doc_key(meta, name)
-        digest = hashlib.sha256(json.dumps([props, blocks], sort_keys=True).encode()).hexdigest()
+        digest = page_digest(props, blocks)
         entry = pages.get(key)
         try:
             if entry and entry.get("hash") == digest:

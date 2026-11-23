@@ -46,7 +46,10 @@ def _images_in(params):
 
 def fake_answer(params):
     images = _images_in(params)
-    if "pages" in params["output_config"]["format"]["schema"]["properties"]:
+    props = params["output_config"]["format"]["schema"]["properties"]
+    if list(props) == ["quality_notes"]:
+        body = {"quality_notes": "Merged: faded ink in places. A second sentence."}
+    elif "pages" in props:
         body = {"pages": [{"image": n, "role": ROLES[n], "note": f"note {n}"} for n in images]}
     else:
         body = {"transcription": "\n".join(f"[image {n}]\nDear Sir, text {n}" for n in images),
