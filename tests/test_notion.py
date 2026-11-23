@@ -271,3 +271,18 @@ def test_cli_notion_dry_run(tmp_path, monkeypatch, capsys):
     make_docs(wd, [([5], "1862-09-17", "Letter", "[image 5]\nText")])
     assert cli.main(["notion", "mss123", "--out", wd, "--database", DB_LINK, "--dry-run"]) == 0
     assert "would push" in capsys.readouterr().out
+
+
+def test_callout_shows_one_sentence_quality_note(workdir, fake_client):
+    from loc_helper import cluster, transcribe
+    cluster.cluster(workdir, "mss123", "claude-sonnet-5-5", batch=False, yes=True,
+                    size=4, overlap=1, client=fake_client)
+    names = transcribe.transcribe(workdir, "claude-opus-5-5", batch=False, yes=True,
+                                  client=fake_client)
+    meta, body = output.parse(open(os.path.join(workdir, "docs", names[0])).read())
+    callout = notion.build_blocks(meta, body)[0]["callout"]["rich_text"]
+    text = "".join(r["text"]["content"] for r in callout)
+    line = next(ln for ln in text.split("\n") if ln.startswith("Quality notes: "))
+    note = line[len("Quality notes: "):]
+    assert note == "Faded ink."
+    assert transcribe.first_sentence(note) == (note, False)

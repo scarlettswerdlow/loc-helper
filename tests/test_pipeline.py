@@ -268,3 +268,81 @@ def test_cli_rejects_bad_args_without_traceback(argv, capsys):
         main(argv)
     assert exc.value.code == 2
     assert "error:" in capsys.readouterr().err
+
+
+# ---------- one-sentence quality notes ----------
+
+@pytest.mark.parametrize("text,expected,cut", [
+    ("No significant problems.", "No significant problems.", False),
+    ("One sentence with no full stop", "One sentence with no full stop", False),
+    ("Faded ink. Docket uncertain.", "Faded ink.", True),
+    ("Telegram from Adjt. Genl. S. Cooper is clear. Docket uncertain.",
+     "Telegram from Adjt. Genl. S. Cooper is clear.", True),
+    ("Names such as Dr [?Arcik?] Leghorn are guessed. Check image 5.",
+     "Names such as Dr [?Arcik?] Leghorn are guessed.", True),
+    ("Dated c. 1868 from content, e.g. Nell's room. Verify.",
+     "Dated c. 1868 from content, e.g. Nell's room.", True),
+    ("Clear hand;\n  one word uncertain.", "Clear hand; one word uncertain.", False),
+])
+def test_first_sentence(text, expected, cut):
+    assert transcribe.first_sentence(text) == (expected, cut)
+
+
+def _results(*notes, date="1862-09-17"):
+    return [{"transcription": f"[image {i}]\ntext", "description": "Letter", "date": date,
+             "date_basis": "written", "quality_notes": n} for i, n in enumerate(notes, 1)]
+
+
+MANIFEST = {n: {"loc_viewer_url": f"https://www.loc.gov/resource/x/?sp={n}"} for n in (1, 2)}
+
+
+def test_assemble_truncates_to_one_sentence(capsys):
+    rec = transcribe.assemble({"id": 3, "images": [1]}, _results("Faded. Torn corner."),
+                              "mss1", MANIFEST)
+    assert rec["meta"]["quality_notes"] == "Faded."
+    assert "document 3" in capsys.readouterr().err
+
+
+def test_assemble_multi_part_uses_merged_note():
+    doc = {"id": 1, "images": [1, 2]}
+    rec = transcribe.assemble(doc, _results("Part one faded.", "Part two clear."), "mss1",
+                              MANIFEST, merged_note="Mostly clear; part one faded.")
+    assert rec["meta"]["quality_notes"] == "Mostly clear; part one faded."
+    # If the merge failed, keep part 1's sentence instead of joining the parts.
+    rec = transcribe.assemble(doc, _results("Part one faded.", "Part two clear."), "mss1", MANIFEST)
+    assert rec["meta"]["quality_notes"] == "Part one faded."
+
+
+def test_assemble_bad_date_stays_one_sentence():
+    rec = transcribe.assemble({"id": 1, "images": [1]}, _results("Faded ink.", date="Sept 1862"),
+                              "mss1", MANIFEST)
+    note = rec["meta"]["quality_notes"]
+    assert rec["meta"]["date"] == "XXXX"
+    assert note.startswith("Faded ink; model returned a non-EDTF date")
+    assert transcribe.first_sentence(note) == (note, False)
+    rec = transcribe.assemble({"id": 1, "images": [1]},
+                              _results("No significant problems.", date="Sept 1862"), "mss1", MANIFEST)
+    assert rec["meta"]["quality_notes"].startswith("Model returned a non-EDTF date")
+
+
+def test_multi_part_document_gets_one_merged_sentence(workdir, fake_client, monkeypatch):
+    cluster.cluster(workdir, "mss123", "claude-sonnet-5-5", batch=False, yes=True,
+                    size=4, overlap=1, client=fake_client)
+    monkeypatch.setattr(transcribe, "CHUNK_PAGES", 2)  # 3-image documents become 2 parts
+    before = fake_client.sync_calls
+    names = transcribe.transcribe(workdir, "claude-opus-5-5", batch=True, yes=True,
+                                  client=fake_client)
+    meta, _ = output.parse(open(os.path.join(workdir, "docs", names[0])).read())
+    # The fake merge answer has two sentences; only the first is kept.
+    assert meta["quality_notes"] == "Merged: faded ink in places."
+    assert "part 1" not in meta["quality_notes"]
+    # The merge ran synchronously even in batch mode, and is cached for re-runs.
+    calls = fake_client.sync_calls
+    assert calls - before == 2
+    transcribe.transcribe(workdir, "claude-opus-5-5", batch=True, yes=True, client=fake_client)
+    assert fake_client.sync_calls == calls
+
+
+def test_condense_notes(tmp_path, fake_client):
+    assert transcribe.condense_notes(["Long note. More."], str(tmp_path), client=fake_client) == \
+        "Merged: faded ink in places. A second sentence."
